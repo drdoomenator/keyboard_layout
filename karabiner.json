@@ -619,6 +619,7 @@
                                 },
                                 "to": [ { "key_code": "quote", "modifiers": ["left_shift"] } ]
                             },
+                            
                             {
                                 "description": "[CUSTOM] RU: d+f -> \"",
                                 "type": "basic",
