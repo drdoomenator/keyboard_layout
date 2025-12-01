@@ -1,0 +1,1 @@
+macos/update_karabiner_russian.py
