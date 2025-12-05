@@ -10,7 +10,7 @@
 ; ============================================
 ; Simultaneous key press threshold (in milliseconds)
 ; Keys must be pressed within this time window to trigger combo
-global SimultaneousThreshold := 30  ; 30ms window for simultaneous detection
+global SimultaneousThreshold := 20  ; 20ms window for simultaneous detection
 
 ; ============================================
 ; SIMULTANEOUS KEY COMBO SYSTEM
@@ -19,18 +19,20 @@ global SimultaneousThreshold := 30  ; 30ms window for simultaneous detection
 global KeyStates := Map()
 global KeyTimestamps := Map()
 global ComboFired := Map()
+global PendingKeys := Map()       ; Keys waiting to see if combo fires
+global PendingShift := Map()      ; Shift state when key was pressed
 
 ; Define all simultaneous combos: [key1, key2, output, requireShift]
 global SimultaneousCombos := [
     ; Shift + combos
-    ["m", ",", "?", true],      ; LShift + m+, -> ?
-    [",", ".", "!", true],      ; LShift + ,+. -> !
+    ["m", "SC033", "?", true],      ; LShift + m+, -> ?
+    ["SC033", "SC034", "!", true],  ; LShift + ,+. -> !
     
     ; Regular simultaneous combos
     ["a", "s", "<", false],     ; a+s -> <
-    ["l", ";", ">", false],     ; l+; -> >
-    [",", ".", ".", false],     ; ,+. -> .
-    ["m", ",", ",", false],     ; m+, -> ,
+    ["l", "SC027", ">", false], ; l+; -> >
+    ["SC033", "SC034", ".", false], ; ,+. -> .
+    ["m", "SC033", ",", false],     ; m+, -> ,
     ["i", "o", "|", false],     ; i+o -> |
     ["k", "l", "&", false],     ; k+l -> &
     ["w", "e", "+", false],     ; w+e -> +
@@ -49,15 +51,11 @@ global SimultaneousCombos := [
     ["n", "m", "}", false],     ; n+m -> }
 ]
 
-; Process key down - check for simultaneous combos
-ProcessKeyDown(thisKey) {
-    global KeyStates, KeyTimestamps, ComboFired, SimultaneousCombos, SimultaneousThreshold
+; Check for combo when second key arrives, return matched combo's other key or ""
+CheckCombo(thisKey) {
+    global KeyStates, KeyTimestamps, ComboFired, SimultaneousCombos, SimultaneousThreshold, PendingKeys
     
     currentTime := A_TickCount
-    KeyStates[thisKey] := true
-    KeyTimestamps[thisKey] := currentTime
-    
-    ; Check shift state
     shiftHeld := GetKeyState("Shift", "P")
     
     ; Check all combos
@@ -80,28 +78,32 @@ ProcessKeyDown(thisKey) {
         else
             continue
         
-        ; Check if other key is pressed and within time threshold
-        if (KeyStates.Has(otherKey) && KeyStates[otherKey]) {
+        ; Check if other key is pending and within time threshold
+        if (PendingKeys.Has(otherKey) && PendingKeys[otherKey]) {
             if (KeyTimestamps.Has(otherKey)) {
                 timeDiff := Abs(currentTime - KeyTimestamps[otherKey])
                 if (timeDiff <= SimultaneousThreshold) {
-                    ; Combo detected! Mark as fired and send output
+                    ; Combo detected! Cancel pending timer for other key
                     comboId := key1 . key2 . (requireShift ? "S" : "")
                     if (!ComboFired.Has(comboId) || !ComboFired[comboId]) {
                         ComboFired[comboId] := true
+                        ; Cancel the pending key's timer
+                        SetTimer(MakeSendFunc(otherKey), 0)
+                        PendingKeys[otherKey] := false
+                        PendingKeys[thisKey] := false
                         SendText(output)
-                        return true  ; Combo fired, suppress key
+                        return otherKey  ; Return which key was the other part of combo
                     }
                 }
             }
         }
     }
-    return false  ; No combo, let key through
+    return ""  ; No combo found
 }
 
 ; Process key up - reset states
 ProcessKeyUp(thisKey) {
-    global KeyStates, ComboFired, SimultaneousCombos
+    global KeyStates, ComboFired, SimultaneousCombos, PendingKeys
     
     KeyStates[thisKey] := false
     
@@ -117,6 +119,50 @@ ProcessKeyUp(thisKey) {
     }
 }
 
+; Create a bound function for timer callback
+MakeSendFunc(key) {
+    return SendPendingKey.Bind(key)
+}
+
+; Timer callback - send the key if still pending
+SendPendingKey(key) {
+    global PendingKeys, PendingShift
+    
+    ; Disable this timer
+    SetTimer(MakeSendFunc(key), 0)
+    
+    ; If key is still pending (combo didn't fire), send it
+    if (PendingKeys.Has(key) && PendingKeys[key]) {
+        PendingKeys[key] := false
+        ; Send with proper shift state
+        if (PendingShift.Has(key) && PendingShift[key])
+            Send("{Blind}{" key "}")
+        else
+            Send("{Blind}{" key "}")
+    }
+}
+
+; Handle key press with delayed combo detection
+HandleKey(key) {
+    global KeyStates, KeyTimestamps, PendingKeys, PendingShift, SimultaneousThreshold
+    
+    currentTime := A_TickCount
+    KeyStates[key] := true
+    KeyTimestamps[key] := currentTime
+    PendingShift[key] := GetKeyState("Shift", "P")
+    
+    ; Check if this key completes a combo with any pending key
+    otherKey := CheckCombo(key)
+    if (otherKey != "") {
+        ; Combo fired, don't send anything (combo already sent output)
+        return
+    }
+    
+    ; No immediate combo - mark as pending and start timer
+    PendingKeys[key] := true
+    SetTimer(MakeSendFunc(key), -SimultaneousThreshold)  ; Negative = run once
+}
+
 ; ============================================
 ; HOTKEY DEFINITIONS - Simultaneous Keys
 ; ============================================
@@ -125,39 +171,39 @@ ProcessKeyUp(thisKey) {
 #HotIf true  ; Always active
 
 ; Row: q w e r t y u i o p
-*q::HandleKey("q", "q")
-*w::HandleKey("w", "w")
-*e::HandleKey("e", "e")
-*r::HandleKey("r", "r")
-*t::HandleKey("t", "t")
-*y::HandleKey("y", "y")
-*u::HandleKey("u", "u")
-*i::HandleKey("i", "i")
-*o::HandleKey("o", "o")
-*p::HandleKey("p", "p")
+*q::HandleKey("q")
+*w::HandleKey("w")
+*e::HandleKey("e")
+*r::HandleKey("r")
+*t::HandleKey("t")
+*y::HandleKey("y")
+*u::HandleKey("u")
+*i::HandleKey("i")
+*o::HandleKey("o")
+*p::HandleKey("p")
 
 ; Row: a s d f g h j k l ;
-*a::HandleKey("a", "a")
-*s::HandleKey("s", "s")
-*d::HandleKey("d", "d")
-*f::HandleKey("f", "f")
-*g::HandleKey("g", "g")
-*h::HandleKey("h", "h")
-*j::HandleKey("j", "j")
-*k::HandleKey("k", "k")
-*l::HandleKey("l", "l")
-*SC027::HandleKey(";", ";")  ; semicolon
+*a::HandleKey("a")
+*s::HandleKey("s")
+*d::HandleKey("d")
+*f::HandleKey("f")
+*g::HandleKey("g")
+*h::HandleKey("h")
+*j::HandleKey("j")
+*k::HandleKey("k")
+*l::HandleKey("l")
+*SC027::HandleKey("SC027")  ; semicolon
 
 ; Row: z x c v b n m , .
-*z::HandleKey("z", "z")
-*x::HandleKey("x", "x")
-*c::HandleKey("c", "c")
-*v::HandleKey("v", "v")
-*b::HandleKey("b", "b")
-*n::HandleKey("n", "n")
-*m::HandleKey("m", "m")
-*,::HandleKey(",", ",")
-*.::HandleKey(".", ".")
+*z::HandleKey("z")
+*x::HandleKey("x")
+*c::HandleKey("c")
+*v::HandleKey("v")
+*b::HandleKey("b")
+*n::HandleKey("n")
+*m::HandleKey("m")
+*SC033::HandleKey("SC033")  ; comma
+*SC034::HandleKey("SC034")  ; period
 
 ; Key up handlers
 *q Up::ProcessKeyUp("q")
@@ -179,7 +225,7 @@ ProcessKeyUp(thisKey) {
 *j Up::ProcessKeyUp("j")
 *k Up::ProcessKeyUp("k")
 *l Up::ProcessKeyUp("l")
-*SC027 Up::ProcessKeyUp(";")
+*SC027 Up::ProcessKeyUp("SC027")
 *z Up::ProcessKeyUp("z")
 *x Up::ProcessKeyUp("x")
 *c Up::ProcessKeyUp("c")
@@ -187,20 +233,8 @@ ProcessKeyUp(thisKey) {
 *b Up::ProcessKeyUp("b")
 *n Up::ProcessKeyUp("n")
 *m Up::ProcessKeyUp("m")
-*, Up::ProcessKeyUp(",")
-*. Up::ProcessKeyUp(".")
-
-; Handle key press with combo detection
-HandleKey(key, defaultOutput) {
-    if (!ProcessKeyDown(key)) {
-        ; No combo fired, send the default character
-        ; But we need to handle shift state properly
-        if (GetKeyState("Shift", "P"))
-            SendText(Format("{:U}", defaultOutput))  ; Uppercase
-        else
-            SendText(defaultOutput)
-    }
-}
+*SC033 Up::ProcessKeyUp("SC033")  ; comma
+*SC034 Up::ProcessKeyUp("SC034")  ; period
 
 #HotIf
 
@@ -230,3 +264,29 @@ HandleKey(key, defaultOutput) {
 !k::SendText("*")
 !l::SendText("(")
 !SC027::SendText(")")  ; Alt + ;
+
+; ============================================
+; MUTED KEYS - Number row disabled
+; ============================================
+*1::return
+*2::return
+*3::return
+*4::return
+*5::return
+*6::return
+*7::return
+*8::return
+*9::return
+*0::return
+*-::return
+*=::return
+
+; ============================================
+; MOUSE CONTROLS
+; ============================================
+; Horizontal scroll -> volume control
+WheelLeft::SoundSetVolume("-1")
+WheelRight::SoundSetVolume("+1")
+
+; Left Alt + Middle Mouse Button -> Screenshot (Win+Shift+S)
+!MButton::Send("#+s")
