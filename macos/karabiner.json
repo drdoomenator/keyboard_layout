@@ -7011,16 +7011,6 @@
                 },
                 {
                     "from": {
-                        "key_code": "caps_lock"
-                    },
-                    "to": [
-                        {
-                            "key_code": "left_option"
-                        }
-                    ]
-                },
-                {
-                    "from": {
                         "key_code": "f17"
                     },
                     "to": [
