@@ -27,8 +27,7 @@ SC056::SendU(0x00A7)         ; §
 
 ; Ctrl+E -> Win+E (Проводник)
 ^e::Send("#e")
-; Ctrl+D -> Win+D (Показать рабочий стол)
-^d::Send("#d")
+
 
 ; F3 -> Win+Shift+S (Скриншот)
 F3::Send("#+s")
